@@ -566,7 +566,7 @@ void delphioracle::make_records_for_medians_table(median_types type, const name&
         median_obj.id = medians_t.available_primary_key();
         median_obj.type = medians::get_type(type);
         median_obj.value = 0;
-        median_obj.count_requests = 0;
+        median_obj.request_count = 0;
         median_obj.timestamp = NULL_TIME_POINT;
       });
     }
@@ -604,7 +604,7 @@ void delphioracle::update_median(const name& owner, const uint64_t value, pairst
     update_part_median(median_types::day, owner, pair_itr->name, value);
 }
 
-void delphioracle::update_part_median(median_types type, const name& owner, const name& pair, const uint64_t value, const uint64_t count_requests) {
+void delphioracle::update_part_median(median_types type, const name& owner, const name& pair, const uint64_t value, const uint64_t request_count) {
   switch (type)
   {
   case median_types::day:
@@ -631,14 +631,14 @@ void delphioracle::update_part_median(median_types type, const name& owner, cons
       auto medians_t_idx = medians_t.get(idx->id);
       medians_t.modify(medians_t_idx, owner, [&](medians &obj) {
         obj.value += value;
-        obj.count_requests += count_requests;
+        obj.request_count += request_count;
       });
     }
     else
     {
       auto oldest = median_id_elements.begin();
       auto value_for_next_step = oldest->value;
-      auto count_request_for_next_step = oldest->count_requests;
+      auto count_request_for_next_step = oldest->request_count;
 
       if (type != median_types::day) { // TODO ingore this check, so we have only one record for day
         auto prev_idx = std::find_if(median_id_elements.begin(), median_id_elements.end(), 
@@ -649,14 +649,14 @@ void delphioracle::update_part_median(median_types type, const name& owner, cons
         if (prev_idx != median_id_elements.end())
         {
           value_for_next_step = prev_idx->value;
-          count_request_for_next_step = prev_idx->count_requests;
+          count_request_for_next_step = prev_idx->request_count;
         }
       }
 
       auto medians_t_idx = medians_t.get(oldest->id);
       medians_t.modify(medians_t_idx, owner, [&](medians &obj) {
         obj.value = value;
-        obj.count_requests = count_requests;
+        obj.request_count = request_count;
         obj.timestamp = get_correct_timepoint(type);
       });
 

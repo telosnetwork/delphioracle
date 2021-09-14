@@ -280,7 +280,7 @@ CONTRACT delphioracle : public eosio::contract {
     uint64_t   id;
     uint8_t    type;
     uint64_t   value;
-    uint64_t   count_requests;
+    uint64_t   request_count;
     time_point timestamp;
 
     uint64_t primary_key() const { return id; }
@@ -391,7 +391,7 @@ private:
   const time_point get_correct_timepoint(median_types type) const;
   void erase_medians(const name& pair);
   void update_median(const name& owner, const uint64_t value, pairstable::const_iterator pair_itr);
-  void update_part_median(median_types type, const name& owner, const name& pair, const uint64_t value, const uint64_t count_requests = 1);
+  void update_part_median(median_types type, const name& owner, const name& pair, const uint64_t value, const uint64_t request_count = 1);
   median_types get_next_type(median_types current_type) const;
 
   //Check if calling account is a qualified oracle
