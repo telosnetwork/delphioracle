@@ -459,7 +459,7 @@ private:
       auto last = store.get(owner.value);
 
       time_point next_push = eosio::time_point(last.timestamp.elapsed + eosio::microseconds(gitr->write_cooldown));
-      // check(ctime >= next_push, "can only call every 60 seconds");
+      check(ctime >= next_push, "can only call every 60 seconds");
 
       store.modify( itr, _self, [&]( auto& s ) {
         s.timestamp = ctime;
