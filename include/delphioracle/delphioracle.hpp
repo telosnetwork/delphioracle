@@ -20,6 +20,7 @@
 #include <eosio/crypto.hpp>
 #include <eosio/system.hpp>
 #include <eosio/producer_schedule.hpp>
+#include <eosio/singleton.hpp>
 #include <math.h>
 
 using namespace eosio;
@@ -290,6 +291,11 @@ CONTRACT delphioracle : public eosio::contract {
       return static_cast<uint8_t>(type);
     }
   };
+
+  TABLE flagmedians {
+    bool is_active = false;
+  };
+  using singleton_flag_medians = eosio::singleton<"flagmedians"_n, flagmedians>;
       
   //Multi index types definition
   typedef eosio::multi_index<"global"_n, global> globaltable;
@@ -346,6 +352,7 @@ CONTRACT delphioracle : public eosio::contract {
   ACTION updateusers();
   ACTION voteabuser(name owner, name abuser);
   ACTION makemedians();
+  ACTION initmedians(bool is_active);
 
   [[eosio::on_notify("eosio.token::transfer")]]
   void transfer(uint64_t sender, uint64_t receiver) {
@@ -384,14 +391,18 @@ CONTRACT delphioracle : public eosio::contract {
   using voteabuser_action = action_wrapper<"voteabuser"_n, &delphioracle::voteabuser>;
   using updateusers_action = action_wrapper<"updateusers"_n, &delphioracle::updateusers>;
   using makemedians_actions = action_wrapper<"makemedians"_n, &delphioracle::makemedians>;
+  using initmedians_actions = action_wrapper<"initmedians"_n, &delphioracle::initmedians>;
   using transfer_action = action_wrapper<name("transfer"), &delphioracle::transfer>;
 
 private:
   void make_records_for_medians_table(median_types type, const name& pair, const name& payer);
-  const time_point get_correct_timepoint(median_types type) const;
+  const time_point get_round_up_current_time(median_types type) const;
+  bool is_in_time_range(median_types type, const time_point& start_time_range,
+    const time_point& time_value, bool is_previous_value = false) const;
   void erase_medians(const name& pair);
-  void update_median(const name& owner, const uint64_t value, pairstable::const_iterator pair_itr);
-  void update_part_median(median_types type, const name& owner, const name& pair, const uint64_t value, const uint64_t request_count = 1);
+  void update_medians(const name& owner, const uint64_t value, pairstable::const_iterator pair_itr);
+  void update_medians_by_types(median_types type, const name& owner, const name& pair, 
+    const time_point& median_timestamp, const uint64_t median_value, const uint64_t median_request_count = 1);
   median_types get_next_type(median_types current_type) const;
 
   //Check if calling account is a qualified oracle
@@ -448,7 +459,7 @@ private:
       auto last = store.get(owner.value);
 
       time_point next_push = eosio::time_point(last.timestamp.elapsed + eosio::microseconds(gitr->write_cooldown));
-      check(ctime >= next_push, "can only call every 60 seconds");
+      // check(ctime >= next_push, "can only call every 60 seconds");
 
       store.modify( itr, _self, [&]( auto& s ) {
         s.timestamp = ctime;
@@ -704,5 +715,10 @@ private:
     const auto& producers = get_active_producers();
     auto result = std::find(producers.begin(), producers.end(), producer);
     check(result != producers.end(), "don't active producer");
+  }
+
+  bool is_medians_active() {
+    singleton_flag_medians flag_medians_instance(get_self(), get_self().value);
+    return flag_medians_instance.exists() && flag_medians_instance.get().is_active;
   }
 };
