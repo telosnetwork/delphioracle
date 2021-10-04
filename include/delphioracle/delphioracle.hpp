@@ -319,6 +319,7 @@ CONTRACT delphioracle : public eosio::contract {
       indexed_by<"owner"_n, const_mem_fun<hashes, uint64_t, &hashes::by_owner>>,
       indexed_by<"hash"_n, const_mem_fun<hashes, checksum256, &hashes::by_hash>>> hashestable;
 
+  [[depricated]]
   typedef eosio::multi_index<"voters"_n, voter_info,
       indexed_by<"voter"_n, const_mem_fun<voter_info, uint64_t, &voter_info::primary_key>>> voters_table;
 
@@ -331,6 +332,7 @@ CONTRACT delphioracle : public eosio::contract {
   typedef eosio::multi_index<"users"_n, users,
       indexed_by<"score"_n, const_mem_fun<users, uint64_t, &users::by_score>>> userstable;
 
+  [[depricated]]
   typedef eosio::multi_index<"abusers"_n, abusers,
       indexed_by<"votes"_n, const_mem_fun<abusers, uint64_t, &abusers::by_votes>>> abuserstable;
   
@@ -343,14 +345,10 @@ CONTRACT delphioracle : public eosio::contract {
   ACTION configure(globalinput g);
   ACTION newbounty(name proposer, pairinput pair);
   ACTION cancelbounty(name name, std::string reason);
-  ACTION votebounty(name owner, name bounty);
-  ACTION unvotebounty(name owner, name bounty);
   ACTION addcustodian(name name);
   ACTION delcustodian(name name);
   ACTION reguser(name owner);
   ACTION clear(name pair);
-  ACTION updateusers();
-  ACTION voteabuser(name owner, name abuser);
   ACTION makemedians();
   ACTION initmedians(bool is_active);
 
@@ -382,14 +380,10 @@ CONTRACT delphioracle : public eosio::contract {
   using configure_action = action_wrapper<"configure"_n, &delphioracle::configure>;
   using newbounty_action = action_wrapper<"newbounty"_n, &delphioracle::newbounty>;
   using cancelbounty_action = action_wrapper<"cancelbounty"_n, &delphioracle::cancelbounty>;
-  using votebounty_action = action_wrapper<"votebounty"_n, &delphioracle::votebounty>;
-  using unvotebounty_action = action_wrapper<"unvotebounty"_n, &delphioracle::unvotebounty>;
   using addcustodian_action = action_wrapper<"addcustodian"_n, &delphioracle::addcustodian>;
   using delcustodian_action = action_wrapper<"delcustodian"_n, &delphioracle::delcustodian>;
   using reguser_action = action_wrapper<"reguser"_n, &delphioracle::reguser>;
   using clear_action = action_wrapper<"clear"_n, &delphioracle::clear>;
-  using voteabuser_action = action_wrapper<"voteabuser"_n, &delphioracle::voteabuser>;
-  using updateusers_action = action_wrapper<"updateusers"_n, &delphioracle::updateusers>;
   using makemedians_actions = action_wrapper<"makemedians"_n, &delphioracle::makemedians>;
   using initmedians_actions = action_wrapper<"initmedians"_n, &delphioracle::initmedians>;
   using transfer_action = action_wrapper<name("transfer"), &delphioracle::transfer>;
@@ -494,38 +488,6 @@ private:
     }
   }
 
-  void update_votes() {
-    print("voting for bps:", "\n");
-
-    std::vector<eosio::name> bps;
-
-    statstable gstore(_self, _self.value);
-
-    auto sorted_idx = gstore.get_index<"count"_n>();
-    auto itr = sorted_idx.begin();
-
-    uint64_t count = 0;
-    while(itr != sorted_idx.end() && count < 30) {
-      print(itr->owner, "\n");
-      
-      if(check_oracle(itr->owner) == true) {
-        bps.push_back(itr->owner);
-        count++;
-      }
-
-      itr++;
-    }
-
-    sort(bps.begin(), bps.end());
-
-    action act(
-      permission_level{_self, "active"_n},
-      "eosio"_n, "voteproducer"_n,
-      std::make_tuple(_self, ""_n, bps)
-    );
-    act.send();
-  }
-
   //Push oracle message on top of queue, pop oldest element if queue size is larger than datapoints_count
   void update_datapoints(const name owner, const uint64_t value, pairstable::const_iterator pair_itr) {
 
@@ -573,8 +535,8 @@ private:
     auto gitr = gtable.begin();
     print("gtable.begin()->total_datapoints_count:", gitr->total_datapoints_count,  "\n");
 
-    if (gtable.begin()->total_datapoints_count % gitr->vote_interval == 0)
-      update_votes();
+    // if (gtable.begin()->total_datapoints_count % gitr->vote_interval == 0)
+    //   update_votes();
   }
 
   //Delphi Oracle - Bounty logic
