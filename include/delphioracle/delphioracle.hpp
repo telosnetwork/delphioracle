@@ -311,7 +311,19 @@ CONTRACT delphioracle : public eosio::contract {
   TABLE flagmedians {
     bool is_active = false;
   };
-  using singleton_flag_medians = eosio::singleton<"flagmedians"_n, flagmedians>;
+  using flag_medians_singleton = eosio::singleton<"flagmedians"_n, flagmedians>;
+
+  TABLE confpayment {
+    double multiplier;
+    double power;
+    bool is_median_cached = false;
+  };
+  using median_config_payments_singleton = eosio::singleton<"confpayment"_n, confpayment>;
+
+  TABLE cachepayment {
+    double median;
+  };
+  using median_cache_payments_singleton = eosio::singleton<"cachepayment"_n, cachepayment>;
       
   //Multi index types definition
   typedef eosio::multi_index<"global"_n, global> globaltable;
@@ -367,9 +379,11 @@ CONTRACT delphioracle : public eosio::contract {
   ACTION clear(name pair);
   ACTION updateusers();
   ACTION voteabuser(name owner, name abuser);
-  ACTION makemedians();
-  ACTION initmedians(bool is_active);
-  ACTION updtversion();
+  ACTION makemedians();                                 // make default tables and records for medians
+  ACTION initmedians(bool is_active);                   // init medians functionality
+  ACTION updtversion();                                 // update contract version
+  ACTION setmdconfig(double multiplier, double power);  // set medians config pauments
+  ACTION setmdcache(bool is_active);                    // set medians cache flag            
 
   [[eosio::on_notify("eosio.token::transfer")]]
   void transfer(uint64_t sender, uint64_t receiver) {
@@ -394,23 +408,25 @@ CONTRACT delphioracle : public eosio::contract {
     }
   }
 
-  using write_action = action_wrapper<"write"_n, &delphioracle::write>;
-  using claim_action = action_wrapper<"claim"_n, &delphioracle::claim>;
-  using configure_action = action_wrapper<"configure"_n, &delphioracle::configure>;
-  using newbounty_action = action_wrapper<"newbounty"_n, &delphioracle::newbounty>;
+  using write_action        = action_wrapper<"write"_n,        &delphioracle::write>;
+  using claim_action        = action_wrapper<"claim"_n,        &delphioracle::claim>;
+  using configure_action    = action_wrapper<"configure"_n,    &delphioracle::configure>;
+  using newbounty_action    = action_wrapper<"newbounty"_n,    &delphioracle::newbounty>;
   using cancelbounty_action = action_wrapper<"cancelbounty"_n, &delphioracle::cancelbounty>;
-  using votebounty_action = action_wrapper<"votebounty"_n, &delphioracle::votebounty>;
+  using votebounty_action   = action_wrapper<"votebounty"_n,   &delphioracle::votebounty>;
   using unvotebounty_action = action_wrapper<"unvotebounty"_n, &delphioracle::unvotebounty>;
   using addcustodian_action = action_wrapper<"addcustodian"_n, &delphioracle::addcustodian>;
   using delcustodian_action = action_wrapper<"delcustodian"_n, &delphioracle::delcustodian>;
-  using reguser_action = action_wrapper<"reguser"_n, &delphioracle::reguser>;
-  using clear_action = action_wrapper<"clear"_n, &delphioracle::clear>;
-  using voteabuser_action = action_wrapper<"voteabuser"_n, &delphioracle::voteabuser>;
-  using updateusers_action = action_wrapper<"updateusers"_n, &delphioracle::updateusers>;
-  using makemedians_actions = action_wrapper<"makemedians"_n, &delphioracle::makemedians>;
-  using initmedians_actions = action_wrapper<"initmedians"_n, &delphioracle::initmedians>;
-  using updtversion_actions = action_wrapper<"updtversion"_n, &delphioracle::updtversion>;
-  using transfer_action = action_wrapper<name("transfer"), &delphioracle::transfer>;
+  using reguser_action      = action_wrapper<"reguser"_n,      &delphioracle::reguser>;
+  using clear_action        = action_wrapper<"clear"_n,        &delphioracle::clear>;
+  using voteabuser_action   = action_wrapper<"voteabuser"_n,   &delphioracle::voteabuser>;
+  using updateusers_action  = action_wrapper<"updateusers"_n,  &delphioracle::updateusers>;
+  using makemedians_actions = action_wrapper<"makemedians"_n,  &delphioracle::makemedians>;
+  using initmedians_actions = action_wrapper<"initmedians"_n,  &delphioracle::initmedians>;
+  using updtversion_actions = action_wrapper<"updtversion"_n,  &delphioracle::updtversion>;
+  using setmdconfig_action  = action_wrapper<"setmdconfig"_n,  &delphioracle::setmdconfig>;
+  using setmdcache_action   = action_wrapper<"setmdcache"_n,   &delphioracle::setmdcache>;
+  using transfer_action     = action_wrapper<name("transfer"), &delphioracle::transfer>;
 
 private:
   bool _is_active_current_week_cashe = false;
@@ -735,7 +751,7 @@ private:
   }
 
   bool is_medians_active() {
-    singleton_flag_medians flag_medians_instance(get_self(), get_self().value);
+    flag_medians_singleton flag_medians_instance(get_self(), get_self().value);
     return flag_medians_instance.exists() && flag_medians_instance.get().is_active;
   }
 };

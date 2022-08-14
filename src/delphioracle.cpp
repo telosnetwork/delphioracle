@@ -596,6 +596,7 @@ void delphioracle::make_records_for_medians_table(median_types type, const name&
 }
 
 const time_point delphioracle::get_round_up_current_time(median_types type) const {
+
   time_t current_time_sec = static_cast<time_t>(current_time_point().sec_since_epoch());
 
   if (!_is_active_current_week_cashe) {
@@ -835,7 +836,7 @@ ACTION delphioracle::initmedians(bool is_active) {
   require_auth(get_self());
   
   flagmedians flag_medians_obj; 
-  singleton_flag_medians flag_medians_instance(get_self(), get_self().value);
+  flag_medians_singleton flag_medians_instance(get_self(), get_self().value);
 
   auto obj = flag_medians_instance.get_or_create(get_self(), flag_medians_obj);
   obj.is_active = is_active;
@@ -891,4 +892,28 @@ ACTION delphioracle::updtversion() {
       }
     }
   }
+}
+
+ACTION delphioracle::setmdcache( bool is_active ) {
+  require_auth( get_self() );
+
+  median_config_payments_singleton config_table( get_self(), get_self().value );
+  check( config_table.exists(), "don't valid median config" );
+
+  auto data = config_table.get();
+  data.is_median_cached = is_active;
+  config_table.set(data, get_self());
+}
+
+ACTION delphioracle::setmdconfig( double multiplier, double power ) {
+  require_auth( get_self() );
+
+  median_config_payments_singleton config_table( get_self(), get_self().value );
+  
+  confpayment config_payments_obj;
+  auto data = config_table.get_or_create( get_self(), config_payments_obj );
+  data.multiplier = multiplier;
+  data.power = power;
+
+  config_table.set(data, get_self());
 }
