@@ -29,6 +29,14 @@ static const std::string system_str("system");
 
 static const asset one_larimer = asset(1, symbol("TLOS", 4));
 
+enum class average_types : uint8_t {
+    last_7_days = 0,
+    last_14_days = 1,
+    last_30_days = 2,
+    last_45_days = 3,
+    none = 255,
+};
+
 enum class median_types : uint8_t {
     day = 0,
     week = 1,
@@ -69,6 +77,8 @@ CONTRACT delphioracle : public eosio::contract {
     uint64_t paid;
     uint64_t min_bounty_delay;
     uint64_t new_bounty_delay;
+    uint64_t daily_datapoints_per_instrument;
+    uint32_t daily_average_timeout;
   };
 
   struct pairinput {
@@ -126,8 +136,8 @@ CONTRACT delphioracle : public eosio::contract {
       std::string memo;
   };
 
-  //Global config
-  TABLE global {
+  //Old Global config
+  TABLE oldglobal {
     //variables
     uint64_t id;
     uint64_t total_datapoints_count;
@@ -149,6 +159,32 @@ CONTRACT delphioracle : public eosio::contract {
     uint64_t primary_key() const { return id; }
   };
 
+  //Global config
+  TABLE global {
+    //variables
+    uint64_t id;
+    uint64_t total_datapoints_count;
+    asset total_claimed = asset(0, symbol("TLOS", 4));
+    uint32_t last_daily_average_run;
+
+    //constants
+    uint64_t datapoints_per_instrument = 21;
+    uint64_t bars_per_instrument = 30;
+    uint64_t vote_interval = 10000;
+    uint64_t write_cooldown = 1000000 * 55;
+    uint64_t approver_threshold = 1;
+    uint64_t approving_oracles_threshold = 1;
+    uint64_t approving_custodians_threshold =1;
+    uint64_t minimum_rank = 105;
+    uint64_t paid = 21;
+    uint64_t min_bounty_delay = 604800;
+    uint64_t new_bounty_delay = 259200;
+    uint64_t daily_datapoints_per_instrument = 45;
+    uint32_t daily_average_timeout = 3600;
+
+    uint64_t primary_key() const { return id; }
+  };
+
   TABLE oglobal {
     uint64_t id;
     uint64_t total_datapoints_count;
@@ -156,6 +192,31 @@ CONTRACT delphioracle : public eosio::contract {
 
     uint64_t primary_key() const { return id; }
   };
+
+
+  // holds the daily datapoints used to compute the averages
+   TABLE daily_datapoints {
+     uint64_t id;
+     uint64_t value;
+     time_point timestamp;
+
+     uint64_t primary_key() const { return id; }
+     uint64_t by_timestamp() const { return timestamp.elapsed.to_seconds(); }
+     uint64_t by_value() const { return value; }
+   };
+
+   TABLE averages {
+     uint64_t id;
+     uint8_t type = get_type(average_types::none);
+     uint64_t value = 0;
+     time_point timestamp = NULL_TIME_POINT;
+     uint64_t primary_key() const { return id; }
+     uint64_t by_timestamp() const { return timestamp.elapsed.to_seconds(); }
+
+     static uint8_t get_type(average_types type) {
+       return static_cast<uint8_t>(type);
+     }
+   };
 
   //Holds the last datapoints_count datapoints from qualified oracles
   TABLE datapoints {
@@ -314,8 +375,9 @@ CONTRACT delphioracle : public eosio::contract {
   using singleton_flag_medians = eosio::singleton<"flagmedians"_n, flagmedians>;
       
   //Multi index types definition
-  typedef eosio::multi_index<"global"_n, global> globaltable;
-  typedef eosio::multi_index<"global"_n, oglobal> oglobaltable;
+  typedef eosio::multi_index<"global"_n, oldglobal> old_globaltable;
+  typedef eosio::multi_index<"globalv2"_n, global> globaltable;
+  typedef eosio::multi_index<"globalv2"_n, oglobal> oglobaltable;
 
   typedef eosio::multi_index<"custodians"_n, custodians> custodianstable;
 
@@ -324,6 +386,13 @@ CONTRACT delphioracle : public eosio::contract {
 
   typedef eosio::multi_index<"pairs"_n, pairs> pairstable;
   typedef eosio::multi_index<"npairs"_n, pairs> npairstable;
+
+ typedef eosio::multi_index<"dailydatapnt"_n, daily_datapoints,
+       indexed_by<"value"_n, const_mem_fun<daily_datapoints, uint64_t, &daily_datapoints::by_value>>,
+       indexed_by<"timestamp"_n, const_mem_fun<daily_datapoints, uint64_t, &daily_datapoints::by_timestamp>>> dailydatapointstable;
+
+  typedef eosio::multi_index<"averages"_n, averages,
+        indexed_by<"timestamp"_n, const_mem_fun<averages, uint64_t, &averages::by_timestamp>>> averagestable;
 
   typedef eosio::multi_index<"datapoints"_n, datapoints,
       indexed_by<"value"_n, const_mem_fun<datapoints, uint64_t, &datapoints::by_value>>,
@@ -425,6 +494,10 @@ private:
     const time_point& median_timestamp, const uint64_t median_value, const uint64_t median_request_count = 1);
   bool is_active_current_week() const;
   std::vector<median_types> GetUpdateMedians(median_types current_type) const;
+  void update_daily_datapoints(name instrument);
+  uint64_t compute_last_days_average(name scope, uint8_t days);
+  void update_averages(name instrument);
+  std::optional<std::pair<time_point, uint64_t>> get_daily_median(name instrument);
 
   //Check if calling account is a qualified oracle
   bool check_oracle(const name owner) {

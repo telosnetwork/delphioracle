@@ -16,6 +16,8 @@
 #include <delphioracle.hpp>
 #include <custom_ctime.hpp>
 #include <algorithm>
+#include <numeric>
+#include <iterator>
 
 namespace {
   const std::map<median_types, uint8_t> limits = {
@@ -31,6 +33,13 @@ namespace {
     {median_types::week,         86400 * 7},
     {median_types::month,        86400 * 7 * 4}
   };
+
+  const std::map<average_types, uint8_t> average_number_of_days = {
+      {average_types::last_7_days,  7},
+      {average_types::last_14_days, 14},
+      {average_types::last_30_days, 30},
+      {average_types::last_45_days, 45}
+    };
 }
 
 //Write datapoint
@@ -81,6 +90,22 @@ ACTION delphioracle::write(const name owner, const std::vector<quote>& quotes) {
 
     update_datapoints(owner, quotes[i].value, itr);
     update_medians(owner, quotes[i].value, itr);
+
+    // The last day averages code does not need to be updated on every write - prevent from executing it too fast
+    globaltable gtable(_self, _self.value);
+    auto gitr = gtable.begin();
+
+    int32_t next_run_sec = gitr->last_daily_average_run + gitr->daily_average_timeout;
+    int32_t current_time_sec = current_time_point().sec_since_epoch();
+
+    if (current_time_sec > next_run_sec) {
+        gtable.modify(gitr, _self, [&](auto& global_value) {
+            global_value.last_daily_average_run = current_time_sec;
+        });
+
+        update_daily_datapoints(itr->name);
+        update_averages(itr->name);
+    }
   }
 }
 
@@ -127,10 +152,21 @@ ACTION delphioracle::configure(globalinput g) {
   auto pitr = pairs.begin();
 
   if (gitr == gtable.end()) {
+    // First time running the configuration, retrieving from the old table
+    old_globaltable old_gtable(_self, _self.value);
+    int total_datapoints_count = 0;
+    asset total_claimed = asset(0, symbol("TLOS", 4));
+
+    auto old_gitr = old_gtable.begin();
+    if (old_gitr != old_gtable.end()) {
+        total_datapoints_count = old_gitr->total_datapoints_count;
+        total_claimed = old_gitr->total_claimed;
+    }
+
     gtable.emplace(_self, [&](auto& o) {
       o.id = 1;
-      o.total_datapoints_count = 0;
-      o.total_claimed = asset(0, symbol("TLOS", 4));
+      o.total_datapoints_count = total_datapoints_count;
+      o.total_claimed = total_claimed;
       o.datapoints_per_instrument = g.datapoints_per_instrument;
       o.bars_per_instrument = g.bars_per_instrument;
       o.vote_interval = g.vote_interval;
@@ -142,6 +178,7 @@ ACTION delphioracle::configure(globalinput g) {
       o.paid = g.paid;
       o.min_bounty_delay = g.min_bounty_delay;
       o.new_bounty_delay = g.new_bounty_delay;
+      o.last_daily_average_run = 0;
     });
   } else {
     gtable.modify(*gitr, _self, [&]( auto& o ) {
@@ -156,6 +193,7 @@ ACTION delphioracle::configure(globalinput g) {
       o.paid = g.paid;
       o.min_bounty_delay = g.min_bounty_delay;
       o.new_bounty_delay = g.new_bounty_delay;
+      o.last_daily_average_run = 0;
     });
   }
 
@@ -891,4 +929,135 @@ ACTION delphioracle::updtversion() {
       }
     }
   }
+}
+
+/**
+    Updates the daily datapoints with the daily median
+    - Gets the daily median
+    - If there are `daily_datapoints_per_instrument` (or more) it will replace the first one
+      updating the timestamp.
+    - If there are less than `daily_datapoints_per_instrument` it will append it
+*/
+void delphioracle::update_daily_datapoints(name instrument) {
+    std::optional<std::pair<time_point, uint64_t>> daily_median = get_daily_median(instrument);
+    if (!daily_median) {
+        return;
+    }
+
+    dailydatapointstable daily_datapoints_table(get_self(), instrument.value);
+    auto daily_datapoints_timestamp_index = daily_datapoints_table.get_index<"timestamp"_n>();
+    size_t count = std::distance(daily_datapoints_timestamp_index.begin(), daily_datapoints_timestamp_index.end());
+
+    globaltable gtable(_self, _self.value);
+    auto gitr = gtable.begin();
+
+    auto last_datapoint = daily_datapoints_timestamp_index.rbegin();
+
+    if (last_datapoint != daily_datapoints_timestamp_index.rend() && last_datapoint->timestamp == daily_median->first) {
+        // We are on the same day, just update
+        daily_datapoints_table.modify(
+            *last_datapoint,
+            _self,
+            [&](auto& datapoint) {
+                datapoint.value = daily_median->second;
+            }
+        );
+    } else if (count > gitr->daily_datapoints_per_instrument) {
+        auto target_record = daily_datapoints_timestamp_index.rbegin();
+        daily_datapoints_timestamp_index.modify(
+            daily_datapoints_timestamp_index.begin(),
+            _self,
+            [&](auto& datapoint) {
+                datapoint.value = daily_median->second;
+                datapoint.timestamp = daily_median->first;
+            }
+        );
+    } else {
+        daily_datapoints_table.emplace(_self, [&](auto& datapoint) {
+            datapoint.id = daily_datapoints_table.available_primary_key();
+            datapoint.value = daily_median->second;
+            datapoint.timestamp = daily_median->first;
+        });
+    }
+}
+
+/**
+    Computes the last day averages using the daily datapoints
+    Fetches the last day averages
+*/
+uint64_t delphioracle::compute_last_days_average(name instrument, uint8_t days) {
+    dailydatapointstable daily_datapoints_table(get_self(), instrument.value);
+
+    auto daily_datapoints_timestamp_index = daily_datapoints_table.get_index<"timestamp"_n>();
+    days = std::min(
+        days,
+        static_cast<uint8_t>(std::distance(daily_datapoints_timestamp_index.begin(), daily_datapoints_timestamp_index.end()))
+    );
+
+    if (days == 0) {
+        return 0;
+    }
+
+    auto past_days = daily_datapoints_timestamp_index.rbegin();
+    std::advance(past_days, days);
+
+    return std::accumulate(
+        daily_datapoints_timestamp_index.rbegin(),
+        past_days,
+        0,
+        [](auto& prev, auto& data_point) {
+            return prev + data_point.value;
+        }
+    ) / days;
+}
+
+void delphioracle::update_averages(name instrument) {
+    averagestable averages_table(_self, instrument.value);
+
+    // iterate average_number_of_days
+    for (auto const& it : average_number_of_days) {
+        average_types type = it.first;
+        uint8_t days = it.second;
+
+        uint64_t average = compute_last_days_average(instrument, days);
+
+        auto average_entry = std::find_if(averages_table.begin(), averages_table.end(),
+            [&](auto& entry) {
+                return entry.type == averages::get_type(type);
+            }
+        );
+
+        if (average_entry == averages_table.end()) {
+            averages_table.emplace(_self, [&](auto& entry) {
+                entry.id = averages_table.available_primary_key();
+                entry.type = averages::get_type(type);
+                entry.value = average;
+                entry.timestamp = current_time_point();
+            });
+        } else {
+            averages_table.modify(average_entry, _self, [&](auto& entry) {
+                entry.value = average;
+                entry.timestamp = current_time_point();
+            });
+        }
+    }
+}
+
+std::optional<std::pair<time_point, uint64_t>> delphioracle::get_daily_median(name instrument) {
+    medianstable medians_table(_self, instrument.value);
+    auto medians_timestamp_index = medians_table.get_index<"timestamp"_n>();
+
+    auto daily_median = std::find_if(medians_timestamp_index.rbegin(), medians_timestamp_index.rend(),
+        [&](auto& median) {
+            return median.type == medians::get_type(median_types::day);
+    });
+
+    if (daily_median != medians_timestamp_index.rend()) {
+        return std::pair(
+            daily_median->timestamp,
+            daily_median->value / daily_median->request_count
+        );
+    }
+
+    return {};
 }
